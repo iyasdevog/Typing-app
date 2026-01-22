@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Timer, Zap, Target, Settings, GraduationCap, RefreshCw, Users, Trophy, ShieldCheck, Trash2, Download, Play, Keyboard, Activity, CheckCircle2, Focus, FileText, Type } from 'lucide-react';
+import { Timer, Zap, Target, Settings, GraduationCap, RefreshCw, Users, Trophy, ShieldCheck, Trash2, Download, Play, Keyboard, Activity, CheckCircle2, Focus, FileText, Type, Gauge } from 'lucide-react';
 import { TestStatus, TypingStats, TestSettings, StudentInfo, LeaderboardEntry } from './types';
 import { generateTypingText, getPerformanceFeedback, getStaticText, CS_STATIC_TEXTS } from './services/geminiService';
 import { StatsCard } from './components/StatsCard';
@@ -50,6 +50,13 @@ interface AlignmentPart {
   char: string;
   targetIdx?: number;
 }
+
+const WPM_LEVELS = [
+  { label: 'Average', wpm: 40 },
+  { label: 'Good', wpm: 60 },
+  { label: 'Expert', wpm: 80 },
+  { label: 'Elite', wpm: 110 },
+];
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'test' | 'leaderboard'>('test');
@@ -202,6 +209,13 @@ const App: React.FC = () => {
       setTargetText(getStaticText(settings.topic));
     }
   }, [settings]);
+
+  // Sync timer when settings.duration changes while IDLE
+  useEffect(() => {
+    if (status === TestStatus.IDLE) {
+      setTimeLeft(settings.duration);
+    }
+  }, [settings.duration, status]);
 
   useEffect(() => {
     if (status === TestStatus.RUNNING && timeLeft > 0 && isFocused) {
@@ -429,23 +443,44 @@ const App: React.FC = () => {
                       {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 text-indigo-400" />}
                    </button>
                 </div>
+
                 <div className="bg-slate-900/40 border border-slate-800 rounded-[2rem] p-6 flex items-center justify-between">
-                   <div className="space-y-1">
-                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Assessment Criteria</p>
-                      <div className="flex items-center gap-4">
+                   <div className="flex-1 space-y-1">
+                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                        <Gauge className="w-3 h-3" /> Assessment Criteria
+                      </p>
+                      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                         <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase">Level:</span>
+                            <select 
+                              className="bg-transparent text-indigo-400 font-black text-[11px] outline-none cursor-pointer hover:text-indigo-300"
+                              value={WPM_LEVELS.find(l => l.wpm === settings.targetWpm)?.label || ''}
+                              onChange={e => {
+                                const level = WPM_LEVELS.find(l => l.label === e.target.value);
+                                if (level) setSettings({...settings, targetWpm: level.wpm});
+                              }}
+                            >
+                              <option value="" disabled className="bg-slate-900">Custom</option>
+                              {WPM_LEVELS.map(l => <option key={l.label} value={l.label} className="bg-slate-900">{l.label} ({l.wpm}+)</option>)}
+                            </select>
+                         </div>
                          <div className="flex items-center gap-2">
                             <span className="text-[10px] text-slate-400 font-bold uppercase">Goal:</span>
-                            <input type="number" className="bg-transparent text-white font-mono font-black text-sm w-12 outline-none border-b border-white/10 focus:border-indigo-500" value={settings.targetWpm} onChange={e => setSettings({...settings, targetWpm: Math.max(1, Number(e.target.value))})} />
+                            <input type="number" className="bg-transparent text-white font-mono font-black text-sm w-12 outline-none border-b border-white/10 focus:border-indigo-500 tabular-nums" value={settings.targetWpm} onChange={e => setSettings({...settings, targetWpm: Math.max(1, Number(e.target.value))})} />
                             <span className="text-[9px] text-slate-600 font-bold">WPM</span>
                          </div>
-                         <div className="w-px h-4 bg-white/5" />
                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-slate-400 font-bold uppercase">Grade Max:</span>
-                            <input type="number" className="bg-transparent text-white font-mono font-black text-sm w-12 outline-none border-b border-white/10 focus:border-indigo-500" value={settings.maxMarks} onChange={e => setSettings({...settings, maxMarks: Math.max(1, Number(e.target.value))})} />
+                            <span className="text-[10px] text-slate-400 font-bold uppercase">Time:</span>
+                            <input type="number" className="bg-transparent text-white font-mono font-black text-sm w-12 outline-none border-b border-white/10 focus:border-indigo-500 tabular-nums" value={settings.duration} onChange={e => setSettings({...settings, duration: Math.max(10, Number(e.target.value))})} />
+                            <span className="text-[9px] text-slate-600 font-bold">SEC</span>
+                         </div>
+                         <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase">Marks:</span>
+                            <input type="number" className="bg-transparent text-white font-mono font-black text-sm w-12 outline-none border-b border-white/10 focus:border-indigo-500 tabular-nums" value={settings.maxMarks} onChange={e => setSettings({...settings, maxMarks: Math.max(1, Number(e.target.value))})} />
                          </div>
                       </div>
                    </div>
-                   <button onClick={() => setHasConfirmedIdentity(false)} className="text-[9px] font-black text-rose-500/50 hover:text-rose-500 uppercase tracking-widest transition-colors">Clear Identity</button>
+                   <button onClick={() => setHasConfirmedIdentity(false)} className="text-[9px] font-black text-rose-500/50 hover:text-rose-500 uppercase tracking-widest transition-colors ml-4 shrink-0">Clear ID</button>
                 </div>
               </div>
             </div>
@@ -519,7 +554,7 @@ const App: React.FC = () => {
       
       <footer className={`py-8 border-t border-white/5 text-center transition-opacity duration-500 overflow-hidden ${status === TestStatus.RUNNING ? 'opacity-0' : 'opacity-100'}`}>
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
-           <p className="text-[9px] font-black text-slate-700 uppercase tracking-[0.5em]">Academic Assessment v3.9 // Side-Pane Logic Stable</p>
+           <p className="text-[9px] font-black text-slate-700 uppercase tracking-[0.5em]">Academic Assessment v4.0 // Custom Levels & Duration Enabled</p>
            <div className="flex items-center gap-4">
              <div className="flex items-center gap-1.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
