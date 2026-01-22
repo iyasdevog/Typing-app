@@ -1,7 +1,14 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Lazy-loaded AI instance to prevent top-level initialization errors
+let aiInstance: any = null;
+function getAI() {
+  if (!aiInstance) {
+    aiInstance = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  }
+  return aiInstance;
+}
 
 export const CS_STATIC_TEXTS: Record<string, string> = {
   'Official Assessment: Hardware': 
@@ -22,6 +29,7 @@ export async function generateTypingText(topic: string, difficulty: 'Easy' | 'Me
   const prompt = `Short typing test paragraph about ${topic}. Level: ${difficulty}. Limit: 100 words. No intro/outro. Direct text only.`;
 
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
@@ -32,6 +40,7 @@ export async function generateTypingText(topic: string, difficulty: 'Easy' | 'Me
     });
     return response.text.trim();
   } catch (error) {
+    console.error("Gemini Error:", error);
     return getStaticText(topic);
   }
 }
@@ -39,6 +48,7 @@ export async function generateTypingText(topic: string, difficulty: 'Easy' | 'Me
 export async function getPerformanceFeedback(stats: { wpm: number, accuracy: number, topic: string }): Promise<string> {
   const prompt = `Quick feedback: WPM ${stats.wpm}, Accuracy ${stats.accuracy}%, Topic ${stats.topic}. 1-2 short sentences.`;
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
