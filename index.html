@@ -14,6 +14,7 @@
       font-family: 'Inter', sans-serif;
       background-color: #0f172a;
       color: #f1f5f9;
+      margin: 0;
     }
     .font-mono {
       font-family: 'JetBrains+Mono', monospace;
@@ -32,10 +33,18 @@
       background: #475569;
     }
   </style>
+  <script>
+    /** 
+     * Polyfill for 'process' global. 
+     * This prevents ReferenceErrors in the browser when geminiService.ts accesses process.env.
+     */
+    window.process = window.process || { env: {} };
+  </script>
 <script type="importmap">
 {
   "imports": {
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client",
     "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
     "recharts": "https://esm.sh/recharts@^3.7.0",
     "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
@@ -47,5 +56,7 @@
 </head>
 <body>
   <div id="root"></div>
+  <!-- Explicitly load the entry point module for standard web hosting -->
+  <script type="module" src="./index.tsx"></script>
 </body>
 </html>
