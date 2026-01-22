@@ -25,6 +25,7 @@ export interface TestSettings {
   difficulty: 'Easy' | 'Medium' | 'Hard';
   topic: string;
   maxMarks: number;
+  targetWpm: number;
 }
 
 export interface LeaderboardEntry extends TypingStats, StudentInfo {
