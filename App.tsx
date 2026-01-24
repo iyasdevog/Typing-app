@@ -1,10 +1,16 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Timer, Zap, Target, Settings, GraduationCap, RefreshCw, Users, Trophy, ShieldCheck, Trash2, Download, Play, Keyboard, Activity, CheckCircle2, Focus, FileText, Type, Gauge } from 'lucide-react';
+import { Timer, Zap, Target, Settings, GraduationCap, RefreshCw, Users, Trophy, ShieldCheck, Trash2, Download, Play, Keyboard, Activity, CheckCircle2, Focus, FileText, Type, Gauge, Cloud, CloudOff, Globe, Wifi, ChevronDown } from 'lucide-react';
 import { TestStatus, TypingStats, TestSettings, StudentInfo, LeaderboardEntry } from './types';
 import { generateTypingText, getPerformanceFeedback, getStaticText, CS_STATIC_TEXTS } from './services/geminiService';
 import { StatsCard } from './components/StatsCard';
 import { ResultView } from './components/ResultView';
+
+// Public KV Storage Configuration (Free No-Auth API)
+const KV_BASE_URL = "https://kvdb.io/mnb_typing_pro_v4"; 
+
+// Predefined Classrooms for Selection
+const PREDEFINED_CLASSROOMS = ['S1', 'S2', 'S3', 'P1', 'P2', 'D1', 'D2', 'D3'];
 
 // Optimized Audio Engine
 const AudioEngine = (() => {
@@ -64,6 +70,9 @@ const App: React.FC = () => {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [hasConfirmedIdentity, setHasConfirmedIdentity] = useState(false);
   const [isFocused, setIsFocused] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [classroomCode, setClassroomCode] = useState<string>(() => localStorage.getItem('cs_classroom_code') || '');
+  const [showSyncModal, setShowSyncModal] = useState(false);
   
   const [settings, setSettings] = useState<TestSettings>(() => {
     const saved = localStorage.getItem('cs_typing_settings');
@@ -102,6 +111,50 @@ const App: React.FC = () => {
   useEffect(() => { statsRef.current = stats; }, [stats]);
   useEffect(() => { localStorage.setItem('cs_student_info', JSON.stringify(student)); }, [student]);
   useEffect(() => { localStorage.setItem('cs_typing_settings', JSON.stringify(settings)); }, [settings]);
+  useEffect(() => { localStorage.setItem('cs_classroom_code', classroomCode); }, [classroomCode]);
+
+  // Cloud Sync Logic
+  const syncWithCloud = useCallback(async (newEntry?: LeaderboardEntry) => {
+    if (!classroomCode.trim()) return;
+    setIsSyncing(true);
+    const key = classroomCode.trim().toUpperCase().replace(/\s+/g, '_');
+    const url = `${KV_BASE_URL}/${key}`;
+
+    try {
+      const response = await fetch(url);
+      let cloudData: LeaderboardEntry[] = [];
+      if (response.ok) {
+        cloudData = await response.json();
+      }
+
+      const localData = JSON.parse(localStorage.getItem('cs_typing_leaderboard') || '[]');
+      const merged = [...cloudData, ...localData];
+      if (newEntry) merged.push(newEntry);
+
+      const uniqueMap = new Map();
+      merged.forEach(item => uniqueMap.set(item.id, item));
+      const finalData = Array.from(uniqueMap.values()).sort((a, b) => b.timestamp - a.timestamp);
+
+      await fetch(url, {
+        method: 'POST',
+        body: JSON.stringify(finalData),
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      setLeaderboard(finalData);
+      localStorage.setItem('cs_typing_leaderboard', JSON.stringify(finalData));
+    } catch (error) {
+      console.warn("Cloud Sync Error:", error);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [classroomCode]);
+
+  useEffect(() => {
+    if (!classroomCode || activeTab !== 'leaderboard') return;
+    const interval = setInterval(() => syncWithCloud(), 15000);
+    return () => clearInterval(interval);
+  }, [classroomCode, activeTab, syncWithCloud]);
 
   const alignment = useMemo(() => {
     const parts: AlignmentPart[] = [];
@@ -165,15 +218,19 @@ const App: React.FC = () => {
       id: Math.random().toString(36).substr(2, 9), timestamp: Date.now(), topic: settings.topic
     };
 
-    setLeaderboard(prev => {
-      const next = [entry, ...prev].slice(0, 1000);
-      localStorage.setItem('cs_typing_leaderboard', JSON.stringify(next));
-      return next;
-    });
+    if (classroomCode) {
+      syncWithCloud(entry);
+    } else {
+      setLeaderboard(prev => {
+        const next = [entry, ...prev].slice(0, 1000);
+        localStorage.setItem('cs_typing_leaderboard', JSON.stringify(next));
+        return next;
+      });
+    }
 
     AudioEngine.success();
     getPerformanceFeedback({ wpm: finalStats.wpm, accuracy: finalStats.accuracy, topic: settings.topic }).then(setFeedback);
-  }, [student, settings, calculateMarks]);
+  }, [student, settings, calculateMarks, classroomCode, syncWithCloud]);
 
   const startTest = useCallback(() => {
     AudioEngine.init();
@@ -210,7 +267,6 @@ const App: React.FC = () => {
     }
   }, [settings]);
 
-  // Sync timer when settings.duration changes while IDLE
   useEffect(() => {
     if (status === TestStatus.IDLE) {
       setTimeLeft(settings.duration);
@@ -249,19 +305,19 @@ const App: React.FC = () => {
   };
 
   const exportToCSV = () => {
-    const headers = ["Rank", "Name", "ID", "Class", "WPM", "Accuracy", "Score", "Date"];
-    const rows = filteredLeaderboard.map((e, i) => [i + 1, e.studentName, e.admissionNumber, e.className, e.wpm, `${e.accuracy}%`, e.currentMarks, new Date(e.timestamp).toLocaleDateString()]);
+    const headers = ["Rank", "Name", "ID", "Class", "WPM", "Accuracy", "Score", "Date", "Topic"];
+    const rows = filteredLeaderboard.map((e, i) => [i + 1, e.studentName, e.admissionNumber, e.className, e.wpm, `${e.accuracy}%`, e.currentMarks, new Date(e.timestamp).toLocaleDateString(), e.topic]);
     const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `typing_report_grade_${student.className}.csv`;
+    a.href = url; a.download = `typing_gradebook_${classroomCode || student.className}.csv`;
     a.click();
   };
 
   const filteredLeaderboard = useMemo(() => {
-    return leaderboard.filter(e => e.className === student.className).sort((a, b) => b.currentMarks - a.currentMarks);
-  }, [leaderboard, student.className]);
+    return leaderboard.sort((a, b) => b.currentMarks - a.currentMarks);
+  }, [leaderboard]);
 
   const isFormValid = student.admissionNumber.trim().length > 1 && student.studentName.trim().length > 1;
 
@@ -279,12 +335,83 @@ const App: React.FC = () => {
             </div>
           </div>
           
-          <div className="flex bg-slate-900/50 p-1 rounded-xl border border-white/5">
-            <button onClick={() => setActiveTab('test')} className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'test' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-white'}`}>Assessment</button>
-            <button onClick={() => setActiveTab('leaderboard')} className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-white'}`}>Leaderboard</button>
+          <div className="flex items-center gap-6">
+            <div className="flex bg-slate-900/50 p-1 rounded-xl border border-white/5">
+              <button onClick={() => setActiveTab('test')} className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'test' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-white'}`}>Assessment</button>
+              <button onClick={() => setActiveTab('leaderboard')} className={`px-5 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-white'}`}>Leaderboard</button>
+            </div>
+
+            <button 
+              onClick={() => setShowSyncModal(true)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${classroomCode ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-slate-800 text-slate-500 hover:border-indigo-500/30 hover:text-indigo-400'}`}
+            >
+              {classroomCode ? <Globe className="w-3.5 h-3.5 animate-pulse" /> : <Wifi className="w-3.5 h-3.5" />}
+              {classroomCode ? `Class: ${classroomCode}` : 'Join Classroom'}
+            </button>
           </div>
         </div>
       </header>
+
+      {/* Classroom Sync Modal */}
+      {showSyncModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-xl animate-in fade-in duration-300">
+          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-10 shadow-3xl ring-1 ring-white/5 space-y-8">
+            <div className="text-center space-y-2">
+               <div className="mx-auto w-16 h-16 bg-indigo-500/10 rounded-2xl flex items-center justify-center mb-4">
+                 <Cloud className="w-8 h-8 text-indigo-500" />
+               </div>
+               <h3 className="text-2xl font-black text-white">Classroom Selection</h3>
+               <p className="text-slate-500 text-xs font-bold uppercase tracking-widest leading-relaxed px-4">Select your assigned group to synchronize the leaderboard with your classmates.</p>
+            </div>
+            
+            <div className="space-y-6">
+              <div className="relative group">
+                <select 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-5 py-5 outline-none focus:ring-2 ring-indigo-500 transition-all font-mono text-center text-xl uppercase tracking-[0.2em] appearance-none cursor-pointer text-white"
+                  value={classroomCode}
+                  onChange={e => setClassroomCode(e.target.value)}
+                >
+                  <option value="" className="bg-slate-900 text-slate-500">-- SELECT CLASSROOM --</option>
+                  {PREDEFINED_CLASSROOMS.map(code => (
+                    <option key={code} value={code} className="bg-slate-900">{code}</option>
+                  ))}
+                  <option value="CUSTOM" className="bg-slate-900 text-slate-400 italic">Custom Code...</option>
+                </select>
+                <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-600">
+                   <ChevronDown className="w-6 h-6" />
+                </div>
+              </div>
+
+              {classroomCode === 'CUSTOM' && (
+                <input 
+                  type="text" 
+                  autoFocus
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-5 py-4 outline-none focus:ring-2 ring-indigo-500 transition-all font-mono text-center text-lg uppercase tracking-widest placeholder:text-slate-700 mt-2" 
+                  placeholder="ENTER UNIQUE CODE" 
+                  onChange={e => setClassroomCode(e.target.value.toUpperCase())} 
+                />
+              )}
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => { setClassroomCode(''); setShowSyncModal(false); syncWithCloud(); }}
+                  className="flex-1 py-4 rounded-xl font-black text-xs uppercase tracking-widest border border-slate-800 text-slate-500 hover:bg-slate-800 transition-all"
+                >
+                  Go Offline
+                </button>
+                <button 
+                  disabled={!classroomCode || classroomCode === 'CUSTOM'}
+                  onClick={() => { setShowSyncModal(false); syncWithCloud(); }}
+                  className={`flex-1 py-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${classroomCode && classroomCode !== 'CUSTOM' ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-xl shadow-indigo-600/20' : 'bg-slate-800 text-slate-700 cursor-not-allowed'}`}
+                >
+                  Join Class
+                </button>
+              </div>
+            </div>
+            <button onClick={() => setShowSyncModal(false)} className="w-full text-[10px] font-black text-slate-600 hover:text-white uppercase tracking-widest transition-colors">Close Portal</button>
+          </div>
+        </div>
+      )}
 
       <main className="flex-1 max-w-7xl mx-auto px-6 py-6 w-full relative">
         {countdown !== null && (
@@ -311,7 +438,7 @@ const App: React.FC = () => {
                     <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-3xl ring-1 ring-white/5 space-y-6">
                       <div className="text-center space-y-2">
                         <Users className="w-10 h-10 text-indigo-500 mx-auto" />
-                        <h3 className="text-xl font-black text-white uppercase tracking-tight">Identity Verification</h3>
+                        <h3 className="text-xl font-black text-white uppercase tracking-tight">Candidate Portal</h3>
                       </div>
                       <div className="space-y-3">
                         <input type="text" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 ring-indigo-500 transition-all font-mono placeholder:text-slate-700" placeholder="Student ID (Admission No.)" value={student.admissionNumber} onChange={e => setStudent({...student, admissionNumber: e.target.value})} />
@@ -332,7 +459,6 @@ const App: React.FC = () => {
                 )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[500px]">
-                  {/* LEFT PANE: SOURCE TEXT */}
                   <div className={`bg-slate-900/40 border border-slate-800 rounded-[2rem] p-8 flex flex-col transition-all duration-500 ${status === TestStatus.RUNNING ? 'ring-1 ring-indigo-500/20' : ''}`}>
                     <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
                       <div className="flex items-center gap-3 text-indigo-400">
@@ -354,7 +480,6 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* RIGHT PANE: INPUT TERMINAL */}
                   <div className={`bg-slate-900/40 border border-slate-800 rounded-[2rem] p-8 flex flex-col relative transition-all duration-500 ${status === TestStatus.RUNNING ? 'ring-1 ring-emerald-500/20' : ''}`}>
                     <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
                       <div className="flex items-center gap-3 text-emerald-400">
@@ -370,7 +495,6 @@ const App: React.FC = () => {
                     </div>
 
                     <div className="relative flex-1 text-xl md:text-2xl leading-[1.8] font-medium select-none font-mono whitespace-pre-wrap overflow-y-auto max-h-[400px] scrollbar-hide">
-                       {/* Focus Guard Overlay */}
                        {status === TestStatus.RUNNING && !isFocused && (
                         <div onClick={() => inputRef.current?.focus()} className="absolute inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center cursor-pointer rounded-xl">
                           <div className="text-center space-y-3">
@@ -380,7 +504,6 @@ const App: React.FC = () => {
                         </div>
                        )}
 
-                       {/* The Actual Colored Input Display */}
                        <div className="z-10 relative">
                         {alignment.parts.map((p, i) => (
                           <span key={i} className={`
@@ -425,7 +548,6 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* FOOTER ACTIONS - Only Visible when IDLE */}
               <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 transition-all duration-500 ${status === TestStatus.RUNNING ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'}`}>
                 <div className="bg-slate-900/40 border border-slate-800 rounded-[2rem] p-6 flex items-center justify-between">
                    <div className="space-y-1">
@@ -486,21 +608,32 @@ const App: React.FC = () => {
             </div>
           )
         ) : (
-          /* LEADERBOARD TAB */
           <div className="animate-in fade-in slide-in-from-bottom-8 duration-1000">
             <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-6">
               <div className="flex items-center gap-4">
                 <div className="w-14 h-14 bg-amber-500/10 rounded-2xl flex items-center justify-center border border-amber-500/20"><Trophy className="w-7 h-7 text-amber-500" /></div>
                 <div>
-                  <h2 className="text-3xl font-black text-white tracking-tighter">Academic Gradebook</h2>
-                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mt-0.5">Records for Section: Grade {student.className}</p>
+                  <h2 className="text-3xl font-black text-white tracking-tighter">
+                    {classroomCode ? `Class Session: ${classroomCode}` : 'Academic Gradebook'}
+                  </h2>
+                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mt-0.5">
+                    {classroomCode ? 'Live synchronization active across PCs' : `Local records for Grade ${student.className}`}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <button onClick={exportToCSV} className="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-500 border border-emerald-500/20 px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all active:scale-95">
-                  <Download className="w-4 h-4" /> EXPORT DATA
+                <button 
+                  onClick={() => syncWithCloud()} 
+                  disabled={!classroomCode || isSyncing}
+                  className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all border ${isSyncing ? 'border-indigo-500/20 text-indigo-400 bg-indigo-500/5 cursor-wait' : 'border-slate-800 text-slate-400 hover:text-white'}`}
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                  Sync Latest
                 </button>
-                <button onClick={() => { if(confirm("Confirm deletion of Section Grades?")) { setLeaderboard([]); localStorage.removeItem('cs_typing_leaderboard'); }}} className="p-3 text-rose-500/40 hover:text-rose-500 transition-colors bg-rose-500/5 rounded-xl border border-rose-500/10"><Trash2 className="w-5 h-5" /></button>
+                <button onClick={exportToCSV} className="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-500 border border-emerald-500/20 px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all active:scale-95">
+                  <Download className="w-4 h-4" /> EXPORT REPORT
+                </button>
+                <button onClick={() => { if(confirm("Clear local/cached records?")) { setLeaderboard([]); localStorage.removeItem('cs_typing_leaderboard'); }}} className="p-3 text-rose-500/40 hover:text-rose-500 transition-colors bg-rose-500/5 rounded-xl border border-rose-500/10"><Trash2 className="w-5 h-5" /></button>
               </div>
             </div>
 
@@ -511,8 +644,8 @@ const App: React.FC = () => {
                     <tr className="bg-slate-900/80 border-b border-slate-800 text-slate-500 text-[9px] uppercase font-black tracking-widest">
                       <th className="px-10 py-6 w-20">Rnk</th>
                       <th className="px-8 py-6">Candidate</th>
-                      <th className="px-8 py-6 text-center">Net WPM</th>
-                      <th className="px-8 py-6 text-center">Accuracy</th>
+                      <th className="px-8 py-6 text-center">Velocity</th>
+                      <th className="px-8 py-6 text-center">Quality</th>
                       <th className="px-10 py-6 text-right">Points</th>
                     </tr>
                   </thead>
@@ -525,11 +658,14 @@ const App: React.FC = () => {
                         <td className="px-8 py-6">
                           <div className="flex flex-col">
                             <span className="text-white font-black text-base group-hover:text-indigo-400 transition-colors uppercase tracking-tight">{e.studentName}</span>
-                            <span className="text-[9px] text-slate-500 font-mono tracking-widest">{e.admissionNumber}</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                               <span className="text-[9px] text-slate-500 font-mono tracking-widest">{e.admissionNumber}</span>
+                               <span className="text-[8px] text-slate-700 uppercase font-black tracking-widest">• GRADE {e.className}</span>
+                            </div>
                           </div>
                         </td>
                         <td className="px-8 py-6 text-center">
-                          <div className="text-xl font-black text-indigo-400">{e.wpm}</div>
+                          <div className="text-xl font-black text-indigo-400">{e.wpm}<span className="text-[9px] ml-1 opacity-40">WPM</span></div>
                         </td>
                         <td className="px-8 py-6 text-center">
                           <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black ${e.accuracy > 90 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>{e.accuracy}%</span>
@@ -540,7 +676,7 @@ const App: React.FC = () => {
                       <tr>
                         <td colSpan={5} className="px-10 py-32 text-center opacity-10">
                           <Users className="w-24 h-24 mx-auto mb-4" />
-                          <p className="font-black text-sm uppercase tracking-widest">No Candidate Data</p>
+                          <p className="font-black text-sm uppercase tracking-widest">No Class Records Sync'd</p>
                         </td>
                       </tr>
                     )}
@@ -554,14 +690,16 @@ const App: React.FC = () => {
       
       <footer className={`py-8 border-t border-white/5 text-center transition-opacity duration-500 overflow-hidden ${status === TestStatus.RUNNING ? 'opacity-0' : 'opacity-100'}`}>
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
-           <p className="text-[9px] font-black text-slate-700 uppercase tracking-[0.5em]">Academic Assessment v4.0 // Custom Levels & Duration Enabled</p>
+           <p className="text-[9px] font-black text-slate-700 uppercase tracking-[0.5em]">Academic Assessment v4.2 // Predefined Classroom Routing Enabled</p>
            <div className="flex items-center gap-4">
              <div className="flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[8px] font-bold text-slate-600 uppercase tracking-widest">Encrypted Local Database</span>
+                <div className={`w-1.5 h-1.5 rounded-full ${classroomCode ? 'bg-emerald-500 animate-pulse' : 'bg-slate-700'}`} />
+                <span className="text-[8px] font-bold text-slate-600 uppercase tracking-widest">
+                  {classroomCode ? `Synced to Cloud: ${classroomCode}` : 'Local Database Only'}
+                </span>
              </div>
              <div className="w-px h-3 bg-white/5" />
-             <span className="text-[8px] font-bold text-slate-600 uppercase tracking-widest">Teacher Controlled Environment</span>
+             <span className="text-[8px] font-bold text-slate-600 uppercase tracking-widest">Educator Portal Active</span>
            </div>
         </div>
       </footer>
